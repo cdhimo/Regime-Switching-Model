@@ -1,0 +1,11 @@
+datetime,BTC_log_ret_7d,BTC_vol_7d,SPX_vol_7d,BTC_mom_7d,SPX_mom_7d,BTC_RSI
+2025-11-09 12:00,-0.0839,high_vol,high_vol,neg_mom,neg_mom,49.46
+2025-11-09 13:00,-0.0812,high_vol,high_vol,neg_mom,neg_mom,45.379
+2025-11-09 14:00,-0.0716,high_vol,high_vol,neg_mom,neg_mom,58.2754
+2025-11-09 15:00,-0.0692,high_vol,high_vol,neg_mom,neg_mom,68.8616
+2025-11-09 16:00,-0.0595,high_vol,high_vol,neg_mom,neg_mom,72.7315
+2025-11-09 17:00,-0.0587,high_vol,high_vol,neg_mom,neg_mom,81.7347
+2025-11-09 18:00,-0.0614,high_vol,high_vol,neg_mom,neg_mom,76.9751
+2025-11-09 19:00,-0.0542,high_vol,high_vol,neg_mom,neg_mom,81.1573
+2025-11-09 20:00,-0.05,high_vol,high_vol,neg_mom,neg_mom,81.5381
+2025-11-09 21:00,-0.0509,high_vol,high_vol,neg_mom,neg_mom,81.5698

@@ -42,6 +42,7 @@ spx_ret_1h = np.log(spx / spx.shift(1))
 # ============================================================
 # 2. DEFINING WINDOWS
 # ============================================================
+H_12H = 12  # 12 hours (half day)
 H_1D  = 24
 H_7D  = 24 * 7
 H_30D = 24 * 30  # ~30 days of hours, used for features + labels
@@ -51,6 +52,9 @@ H_30D = 24 * 30  # ~30 days of hours, used for features + labels
 # ============================================================
 # 1h (already above, but keep explicit)
 BTC_log_ret_1h = btc_ret_1h
+
+# 12-hour backward log return
+BTC_log_ret_12h = np.log(btc / btc.shift(H_12H))
 
 # 1-day (24h) backward log return
 BTC_log_ret_1d = np.log(btc / btc.shift(H_1D))
@@ -79,6 +83,13 @@ BTC_fwd_30d_log_ret = np.log(btc.shift(-H_30D) / btc)
 # ============================================================
 # 5. BASE NUMERIC FEATURES (VOL, MOMENTUM, RANGE)
 # ============================================================
+# 12-hour features
+btc_vol_12h = btc_ret_1h.rolling(H_12H).std()
+spx_vol_12h = spx_ret_1h.rolling(H_12H).std()
+btc_mom_12h = btc / btc.shift(H_12H) - 1
+spx_mom_12h = spx / spx.shift(H_12H) - 1
+
+# 7-day features
 btc_vol_7d = btc_ret_1h.rolling(H_7D).std()
 spx_vol_7d = spx_ret_1h.rolling(H_7D).std()
 
@@ -109,6 +120,8 @@ def compute_rsi(series, window=14):
     return rsi
 
 BTC_RSI_14 = compute_rsi(btc, window=14)
+SPX_RSI_14 = compute_rsi(spx, window=14)
+US10Y_RSI_14 = compute_rsi(us10y, window=14)
 
 # ---------- MACD (12-26 EMA, signal 9 EMA) ----------
 fast_span   = 12
@@ -202,13 +215,19 @@ def bucket_to_label(series, low_label, mid_label, high_label):
         return high_label
     return series.apply(f)
 
-BTC_vol_regime_7d = bucket_to_label(btc_vol_7d, "low_vol", "mid_vol", "high_vol")
-SPX_vol_regime_7d = bucket_to_label(spx_vol_7d, "low_vol", "mid_vol", "high_vol")
+# 12-hour categorical features
+BTC_vol_12h = bucket_to_label(btc_vol_12h, "low_vol", "mid_vol", "high_vol")
+SPX_vol_12h = bucket_to_label(spx_vol_12h, "low_vol", "mid_vol", "high_vol")
+BTC_mom_12h = bucket_to_label(btc_mom_12h, "neg_mom", "neutral_mom", "pos_mom")
+SPX_mom_12h = bucket_to_label(spx_mom_12h, "neg_mom", "neutral_mom", "pos_mom")
 
-BTC_mom_regime_7d = bucket_to_label(btc_mom_7d, "neg_mom", "neutral_mom", "pos_mom")
-SPX_mom_regime_7d = bucket_to_label(spx_mom_7d, "neg_mom", "neutral_mom", "pos_mom")
+# 7-day categorical features
+BTC_vol_7d = bucket_to_label(btc_vol_7d, "low_vol", "mid_vol", "high_vol")
+SPX_vol_7d = bucket_to_label(spx_vol_7d, "low_vol", "mid_vol", "high_vol")
+BTC_mom_7d = bucket_to_label(btc_mom_7d, "neg_mom", "neutral_mom", "pos_mom")
+SPX_mom_7d = bucket_to_label(spx_mom_7d, "neg_mom", "neutral_mom", "pos_mom")
 
-BTC_range_regime_1d = bucket_to_label(btc_range_1d, "small_range", "mid_range", "large_range")
+BTC_range_1d = bucket_to_label(btc_range_1d, "small_range", "mid_range", "large_range")
 
 # ============================================================
 # 10. BUILD FINAL FEATURE TABLE
@@ -225,17 +244,24 @@ features = pd.DataFrame({
 
     # BTC multi-horizon log returns (backward-looking)
     "BTC_log_ret_1h": BTC_log_ret_1h,
+    "BTC_log_ret_12h": BTC_log_ret_12h,
     "BTC_log_ret_1d": BTC_log_ret_1d,
     "BTC_log_ret_7d": BTC_log_ret_7d,
     "BTC_log_ret_30d": BTC_log_ret_30d,
 
-    # Volatility & momentum
-    "BTC_vol_7d": btc_vol_7d,
-    "SPX_vol_7d": spx_vol_7d,
+    # 12-hour features (numeric)
+    "BTC_vol_12h_num": btc_vol_12h,
+    "SPX_vol_12h_num": spx_vol_12h,
+    "BTC_mom_12h_num": btc_mom_12h,
+    "SPX_mom_12h_num": spx_mom_12h,
+
+    # Volatility & momentum (numeric)
+    "BTC_vol_7d_num": btc_vol_7d,
+    "SPX_vol_7d_num": spx_vol_7d,
     "BTC_mom_1d": btc_mom_1d,
-    "BTC_mom_7d": btc_mom_7d,
+    "BTC_mom_7d_num": btc_mom_7d,
     "SPX_mom_1d": spx_mom_1d,
-    "SPX_mom_7d": spx_mom_7d,
+    "SPX_mom_7d_num": spx_mom_7d,
     "BTC_range_1d": btc_range_1d,
 
     # Rate features (US10Y)
@@ -245,8 +271,10 @@ features = pd.DataFrame({
     "US10Y_vol_7d": US10Y_vol_7d,
     "US10Y_level_7d_mean": US10Y_level_7d_mean,
 
-    # Technical indicators (BTC)
+    # Technical indicators (RSI for all assets)
     "BTC_RSI_14": BTC_RSI_14,
+    "SPX_RSI_14": SPX_RSI_14,
+    "US10Y_RSI_14": US10Y_RSI_14,
     "BTC_MACD_line": BTC_MACD_line,
     "BTC_MACD_signal": BTC_MACD_signal,
     "BTC_MACD_hist": BTC_MACD_hist,
@@ -261,12 +289,18 @@ features = pd.DataFrame({
     "day_of_week_cat": day_of_week_cat,
     "weekend_cat": weekend_cat,
 
-    # Regime-style categorical buckets
-    "BTC_vol_regime_7d": BTC_vol_regime_7d,
-    "SPX_vol_regime_7d": SPX_vol_regime_7d,
-    "BTC_mom_regime_7d": BTC_mom_regime_7d,
-    "SPX_mom_regime_7d": SPX_mom_regime_7d,
-    "BTC_range_regime_1d": BTC_range_regime_1d,
+    # 12-hour categorical buckets
+    "BTC_vol_12h": BTC_vol_12h,
+    "SPX_vol_12h": SPX_vol_12h,
+    "BTC_mom_12h": BTC_mom_12h,
+    "SPX_mom_12h": SPX_mom_12h,
+
+    # Categorical buckets (volatility, momentum, range)
+    "BTC_vol_7d": BTC_vol_7d,
+    "SPX_vol_7d": SPX_vol_7d,
+    "BTC_mom_7d": BTC_mom_7d,
+    "SPX_mom_7d": SPX_mom_7d,
+    "BTC_range_1d": BTC_range_1d,
 
     # Forward returns (labels / extra targets)
     "BTC_fwd_1h_log_ret": BTC_fwd_1h_log_ret,
