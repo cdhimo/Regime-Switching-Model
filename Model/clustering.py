@@ -29,7 +29,7 @@ def assign_regimes(df_algo, cluster_col, allow_noise=False):
         "BTC_ADX_14",
         "BTC_MACD_hist",
         "BTC_BB_width_20",
-        "BTC_fwd_30d_log_ret"
+        "BTC_fwd_7d_log_ret"
     ]
 
     for r in required:
@@ -55,27 +55,49 @@ def assign_regimes(df_algo, cluster_col, allow_noise=False):
     # --- Compute cluster summaries ---
     summary = df_algo.groupby(cluster_col)[required].mean()
 
-    # 1) BULL & BEAR decided EXCLUSIVELY by forward returns
-    bull_cluster = summary["BTC_fwd_30d_log_ret"].idxmax()
-    bear_cluster = summary["BTC_fwd_30d_log_ret"].idxmin()
+    # 1) Expansion (Growth) = cluster with highest forward returns
+    expansion_cluster = summary["BTC_fwd_7d_log_ret"].idxmax()
 
-    # Remove bull & bear, assign remaining as steady / high_vol
-    remaining = summary.drop([bull_cluster, bear_cluster])
+    # 2) Contraction (Downtrend) = cluster with lowest forward returns
+    contraction_cluster = summary["BTC_fwd_7d_log_ret"].idxmin()
 
-    # 2) High Volume = highest vol *and* widest BB bands
-    highvol_cluster = (remaining["BTC_vol_7d"] + remaining["BTC_BB_width_20"]).idxmax()
+    # 3) Dislocation (High-Volatility) - from remaining clusters
+    remaining_for_vol = summary.drop([expansion_cluster, contraction_cluster])
+    dislocation_cluster = (remaining_for_vol["BTC_vol_7d"] + remaining_for_vol["BTC_BB_width_20"]).idxmax()
 
-    # 3) Steady = opposite of high vol → lowest vol + lowest ADX
-    remaining2 = remaining.drop(highvol_cluster)
-    steady_cluster = (remaining2["BTC_vol_7d"] + remaining2["BTC_ADX_14"]).idxmin()
+    # 4) Compression (Low-Vol) - last remaining cluster
+    remaining_for_comp = remaining_for_vol.drop(dislocation_cluster)
+    compression_cluster = (remaining_for_comp["BTC_vol_7d"] + remaining_for_comp["BTC_ADX_14"]).idxmin()
 
-    # --- Final map ---
+    # Final regime names
     regime_map = {
-        bull_cluster: "bull",
-        bear_cluster: "bear",
-        highvol_cluster: "high_vol",
-        steady_cluster: "steady",
+        expansion_cluster:   "Expansion (Growth)",
+        contraction_cluster: "Contraction (Downtrend)",
+        dislocation_cluster: "Dislocation (High-Volatility)",
+        compression_cluster: "Compression (Low-Volatility)"
     }
+
+    # Verify all clusters are mapped
+    all_clusters = set(summary.index)
+    mapped_clusters = set(regime_map.keys())
+    if all_clusters != mapped_clusters:
+        unmapped = all_clusters - mapped_clusters
+        print(f"[WARN] Unmapped clusters: {unmapped}")
+        # Assign remaining clusters to the closest regime
+        for unmapped_cluster in unmapped:
+            # Find closest regime by forward returns
+            unmapped_ret = summary.loc[unmapped_cluster, "BTC_fwd_7d_log_ret"]
+            if unmapped_ret >= summary.loc[expansion_cluster, "BTC_fwd_7d_log_ret"]:
+                regime_map[unmapped_cluster] = "Expansion (Growth)"
+            elif unmapped_ret <= summary.loc[contraction_cluster, "BTC_fwd_7d_log_ret"]:
+                regime_map[unmapped_cluster] = "Contraction (Downtrend)"
+            else:
+                # Check volatility
+                unmapped_vol = summary.loc[unmapped_cluster, "BTC_vol_7d"] + summary.loc[unmapped_cluster, "BTC_BB_width_20"]
+                if unmapped_vol >= (summary.loc[dislocation_cluster, "BTC_vol_7d"] + summary.loc[dislocation_cluster, "BTC_BB_width_20"]):
+                    regime_map[unmapped_cluster] = "Dislocation (High-Volatility)"
+                else:
+                    regime_map[unmapped_cluster] = "Compression (Low-Volatility)"
 
     df_algo["regime"] = [
         "noise" if (allow_noise and c == -1) else regime_map.get(c, f"cluster_{c}")
@@ -83,7 +105,6 @@ def assign_regimes(df_algo, cluster_col, allow_noise=False):
     ]
 
     return df_algo, regime_map
-
 
 
 # ============================================================
@@ -130,6 +151,11 @@ possible_numeric_features = [
     "BTC_MACD_hist",
     "BTC_BB_width_20",
     "BTC_ADX_14",
+
+    #US10Y
+    'US10Y_chg_7d', 
+    'US10Y_vol_7d',
+    'US10Y_level_7d_mean'
 ]
 
 numeric_features = [c for c in possible_numeric_features if c in df.columns]

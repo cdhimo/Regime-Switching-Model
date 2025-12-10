@@ -178,7 +178,7 @@ def load_three_assets_1h_ohlc(days_back: int = 5,
 
 if __name__ == "__main__":
     # While debugging, keep days_back small
-    data = load_three_assets_1h_ohlc(days_back=90, vol_window_hours=24)
+    data = load_three_assets_1h_ohlc(days_back=150, vol_window_hours=24)
     print(data)
 
     btc_ohlcv = data.get("BTC")
