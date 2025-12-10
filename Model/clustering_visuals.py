@@ -1,164 +1,225 @@
-import pandas as pd
+import os
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
+
 from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+from pandas.plotting import parallel_coordinates
 
-plt.style.use('seaborn-v0_8')
+# ============================================================
+# CONFIG
+# ============================================================
 
-df = pd.read_csv("Data/regime_features_with_regimes.csv", index_col=0, parse_dates=True)
+INPUT_PATH = "Data/Output/agglomerative_regimes.csv"
 
-# Choose relevant numeric features for plots
-num_features = [
-    "BTC_ret_1h", "BTC_mom_1d", "BTC_mom_7d",
-    "BTC_vol_7d", "BTC_range_1d",
-    "SPX_ret_1h", "SPX_vol_7d"
+# Where to save all figures and outputs
+FIG_DIR = "Figures"
+os.makedirs(FIG_DIR, exist_ok=True)
+
+# ============================================================
+# LOAD DATA
+# ============================================================
+df = pd.read_csv(INPUT_PATH, index_col=0, parse_dates=True)
+df = df.sort_index()
+
+print("Loaded for visuals:", df.shape)
+print("Columns:", df.columns.tolist())
+
+if "regime" not in df.columns:
+    raise ValueError("Expected a 'regime' column in the CSV.")
+
+regime_col = "regime"
+
+# Try to locate a BTC price column
+if "BTC_Close" in df.columns:
+    price_col = "BTC_Close"
+elif "BTC_close" in df.columns:
+    price_col = "BTC_close"
+elif "close" in df.columns:
+    price_col = "close"
+else:
+    raise ValueError("Could not find a BTC price column (BTC_Close / BTC_close / close).")
+
+# Try to locate forward 30d BTC log-return column
+fwd_col = "BTC_fwd_30d_log_ret" if "BTC_fwd_30d_log_ret" in df.columns else None
+
+# Some volatility / range features (only use those that exist)
+vol_candidates = [c for c in ["BTC_vol_7d", "BTC_vol_30d", "BTC_range_1d"] if c in df.columns]
+vol_col = vol_candidates[0] if vol_candidates else None
+
+# Numeric feature list for PCA & parallel coordinates
+numeric_candidates = [
+    c for c in df.columns
+    if df[c].dtype != "O" and any(k in c for k in ["BTC_", "SPX_", "US10Y"])
 ]
 
-# ------------------------------------------------------
-# 1. TIME SERIES REGIME OVERLAY PLOT
-# ------------------------------------------------------
-def plot_regime_timeseries():
-    regime_colors = {
-        "bull": "green",
-        "bear": "red",
-        "steady": "blue",
-        "high_volume": "orange"
-    }
+numeric_candidates = list(dict.fromkeys(numeric_candidates))  # dedupe
 
-    plt.figure(figsize=(16,6))
-    plt.plot(df.index, df["BTC_Close"], color="black", alpha=0.7, label="BTC Price")
+print("Numeric candidates for PCA/parallel:", numeric_candidates)
 
-    # Shade regions by regime
-    for regime, color in regime_colors.items():
-        mask = df["regime"] == regime
-        plt.scatter(df.index[mask], df["BTC_Close"][mask], s=10, color=color, label=regime)
+# ============================================================
+# 1. REGIME COUNTS BAR CHART
+# ============================================================
+plt.figure(figsize=(6, 4))
+df[regime_col].value_counts().plot(kind="bar")
+plt.title("Regime Counts")
+plt.ylabel("Number of observations")
+plt.xlabel("Regime")
+plt.tight_layout()
+fig_path = os.path.join(FIG_DIR, "regime_counts.png")
+plt.savefig(fig_path, dpi=300)
+plt.close()
+print("Saved:", fig_path)
 
+# ============================================================
+# 2. BTC PRICE OVER TIME BY REGIME
+# ============================================================
+plt.figure(figsize=(10, 4))
+for regime, group in df.groupby(regime_col):
+    plt.plot(group.index, group[price_col], ".", label=regime, alpha=0.6)
+
+plt.title("BTC Price over Time by Regime")
+plt.xlabel("Time")
+plt.ylabel("BTC Price")
+plt.legend()
+plt.tight_layout()
+fig_path = os.path.join(FIG_DIR, "btc_price_by_regime.png")
+plt.savefig(fig_path, dpi=300)
+plt.close()
+print("Saved:", fig_path)
+
+# ============================================================
+# 3. FORWARD 30D BTC RETURNS BY REGIME (KDE + BOXPLOT)
+# ============================================================
+if fwd_col is not None:
+    # KDE
+    plt.figure(figsize=(8, 4))
+    for regime in df[regime_col].unique():
+        subset = df[df[regime_col] == regime][fwd_col].dropna()
+        if subset.empty:
+            continue
+        subset.plot(kind="kde", label=regime)
+    plt.title("Distribution of 30-day Forward BTC Log Returns by Regime")
+    plt.xlabel(fwd_col)
     plt.legend()
-    plt.title("BTC Regime Overlay")
-    plt.xlabel("Date")
-    plt.ylabel("BTC Price")
     plt.tight_layout()
-    plt.show()
+    fig_path = os.path.join(FIG_DIR, "fwd_returns_kde_by_regime.png")
+    plt.savefig(fig_path, dpi=300)
+    plt.close()
+    print("Saved:", fig_path)
 
-# ------------------------------------------------------
-# 2. PCA 2D SCATTER PLOT
-# ------------------------------------------------------
-def plot_pca_clusters():
-    from sklearn.preprocessing import StandardScaler
+    # Boxplot
+    plt.figure(figsize=(8, 4))
+    data_box = [df[df[regime_col] == r][fwd_col].dropna() for r in df[regime_col].unique()]
+    plt.boxplot(data_box, labels=df[regime_col].unique())
+    plt.title("30-day Forward BTC Log Returns by Regime (Boxplot)")
+    plt.ylabel(fwd_col)
+    plt.tight_layout()
+    fig_path = os.path.join(FIG_DIR, "fwd_returns_boxplot_by_regime.png")
+    plt.savefig(fig_path, dpi=300)
+    plt.close()
+    print("Saved:", fig_path)
+else:
+    print("[INFO] Forward 30d return column not found; skipping forward-return plots.")
 
-    df_clean = df.dropna(subset=num_features)
-    X = df_clean[num_features]
+# ============================================================
+# 4. VOLATILITY BY REGIME (BOXPLOT)
+# ============================================================
+if vol_col is not None:
+    plt.figure(figsize=(8, 4))
+    data_box = [df[df[regime_col] == r][vol_col].dropna() for r in df[regime_col].unique()]
+    plt.boxplot(data_box, labels=df[regime_col].unique())
+    plt.title(f"{vol_col} by Regime (Boxplot)")
+    plt.ylabel(vol_col)
+    plt.tight_layout()
+    fig_path = os.path.join(FIG_DIR, "volatility_boxplot_by_regime.png")
+    plt.savefig(fig_path, dpi=300)
+    plt.close()
+    print("Saved:", fig_path)
+else:
+    print("[INFO] No volatility column found (BTC_vol_7d / BTC_vol_30d / BTC_range_1d); skipping volatility boxplot.")
+
+# ============================================================
+# 5. PARALLEL COORDINATES PLOT
+# ============================================================
+if len(numeric_candidates) >= 2:
+    par_df = df[numeric_candidates + [regime_col]].dropna()
+
+    # Optionally subsample for clarity if too many points
+    max_points = 1000
+    if par_df.shape[0] > max_points:
+        par_df = par_df.sample(max_points, random_state=42).sort_index()
+
+    # Normalize numeric columns for clearer parallel coordinates
+    scaler = StandardScaler()
+    par_df_scaled = par_df.copy()
+    par_df_scaled[numeric_candidates] = scaler.fit_transform(par_df[numeric_candidates])
+
+    plt.figure(figsize=(10, 6))
+    parallel_coordinates(par_df_scaled, class_column=regime_col)
+    plt.title("Parallel Coordinates of Features by Regime")
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    fig_path = os.path.join(FIG_DIR, "parallel_coordinates_by_regime.png")
+    plt.savefig(fig_path, dpi=300)
+    plt.close()
+    print("Saved:", fig_path)
+else:
+    print("[INFO] Not enough numeric features for parallel coordinates.")
+
+# ============================================================
+# 6. PCA 2D SCATTER COLORED BY REGIME
+# ============================================================
+if len(numeric_candidates) >= 2:
+    num_df = df[numeric_candidates].dropna()
+    regimes_for_pca = df.loc[num_df.index, regime_col]
 
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    X_scaled = scaler.fit_transform(num_df.values)
 
-    pca = PCA(n_components=2)
-    pc = pca.fit_transform(X_scaled)
+    pca = PCA(n_components=2, random_state=42)
+    X_pca = pca.fit_transform(X_scaled)
 
-    df_clean["PC1"] = pc[:,0]
-    df_clean["PC2"] = pc[:,1]
+    pca_df = pd.DataFrame(X_pca, index=num_df.index, columns=["PC1", "PC2"])
+    pca_df[regime_col] = regimes_for_pca
 
-    plt.figure(figsize=(10,7))
-    sns.scatterplot(
-        data=df_clean,
-        x="PC1",
-        y="PC2",
-        hue="regime",
-        palette={"bull": "green","bear": "red","steady":"blue","high_volume":"orange"},
-        alpha=0.6
-    )
-
-    plt.title("PCA Projection of Regime Clusters")
+    plt.figure(figsize=(7, 5))
+    for regime, group in pca_df.groupby(regime_col):
+        plt.scatter(group["PC1"], group["PC2"], label=regime, alpha=0.5, s=10)
+    plt.title("PCA of Features Colored by Regime")
+    plt.xlabel("PC1")
+    plt.ylabel("PC2")
+    plt.legend()
     plt.tight_layout()
-    plt.show()
+    fig_path = os.path.join(FIG_DIR, "pca_scatter_by_regime.png")
+    plt.savefig(fig_path, dpi=300)
+    plt.close()
+    print("Saved:", fig_path)
 
-# ------------------------------------------------------
-# 3. CLUSTER HEATMAP OF FEATURE MEANS
-# ------------------------------------------------------
-def plot_feature_heatmap():
-    cluster_means = df.groupby("regime")[num_features].mean()
+    print("Explained variance ratio:", pca.explained_variance_ratio_)
+else:
+    print("[INFO] Not enough numeric features for PCA.")
 
-    plt.figure(figsize=(10,6))
-    sns.heatmap(cluster_means, annot=True, cmap="coolwarm", fmt=".2f")
-    plt.title("Average Feature Values per Regime")
+# ============================================================
+# 7. MEAN FORWARD RETURN BY REGIME (BAR CHART)
+# ============================================================
+if fwd_col is not None:
+    mean_returns = df.groupby(regime_col)[fwd_col].mean()
+    std_returns = df.groupby(regime_col)[fwd_col].std()
+
+    x = np.arange(len(mean_returns))
+    plt.figure(figsize=(7, 4))
+    plt.bar(x, mean_returns.values)
+    plt.xticks(x, mean_returns.index)
+    plt.title("Mean 30-day Forward BTC Log Return by Regime")
+    plt.ylabel(fwd_col)
     plt.tight_layout()
-    plt.show()
+    fig_path = os.path.join(FIG_DIR, "mean_fwd_return_by_regime.png")
+    plt.savefig(fig_path, dpi=300)
+    plt.close()
+    print("Saved:", fig_path)
+else:
+    print("[INFO] No forward return column; skipping mean forward-return bar chart.")
 
-# ------------------------------------------------------
-# 4. RADAR CHARTS FOR EACH REGIME
-# ------------------------------------------------------
-def plot_radar_charts():
-    cluster_means = df.groupby("regime")[num_features].mean()
 
-    categories = num_features
-    N = len(categories)
-
-    for regime in cluster_means.index:
-        values = cluster_means.loc[regime].values
-        values = np.concatenate([values, [values[0]]])  # wrap around
-
-        angles = np.linspace(0, 2*np.pi, N, endpoint=False)
-        angles = np.concatenate([angles, [angles[0]]])
-
-        plt.figure(figsize=(6,6))
-        ax = plt.subplot(111, polar=True)
-        ax.plot(angles, values, linewidth=2)
-        ax.fill(angles, values, alpha=0.25)
-        ax.set_xticks(angles[:-1])
-        ax.set_xticklabels(categories)
-        ax.set_title(f"Radar Chart – {regime.capitalize()} Regime")
-        plt.tight_layout()
-        plt.show()
-
-# ------------------------------------------------------
-# 5. REGIME FREQUENCY BAR CHART
-# ------------------------------------------------------
-def plot_regime_hist():
-    plt.figure(figsize=(8,4))
-    df["regime"].value_counts().plot(kind="bar", color=["green","red","blue","orange"])
-    plt.title("Regime Frequency")
-    plt.ylabel("Count")
-    plt.tight_layout()
-    plt.show()
-
-# ------------------------------------------------------
-# 6. TRANSITION MATRIX (Markov-style)
-# ------------------------------------------------------
-def plot_transition_matrix():
-    regimes = df["regime"].unique()
-    idx = {r:i for i,r in enumerate(regimes)}
-
-    transition = np.zeros((len(regimes), len(regimes)))
-
-    prev = df["regime"].iloc[0]
-    for r in df["regime"].iloc[1:]:
-        transition[idx[prev], idx[r]] += 1
-        prev = r
-
-    # Normalize rows
-    transition = transition / transition.sum(axis=1, keepdims=True)
-
-    plt.figure(figsize=(6,5))
-    sns.heatmap(
-        transition,
-        annot=True,
-        xticklabels=regimes,
-        yticklabels=regimes,
-        cmap="Blues",
-        fmt=".2f"
-    )
-    plt.title("Regime Transition Matrix")
-    plt.tight_layout()
-    plt.show()
-
-# ------------------------------------------------------
-# RUN ALL VISUALS
-# ------------------------------------------------------
-if __name__ == "__main__":
-    plot_regime_timeseries()
-    plot_pca_clusters()
-    plot_feature_heatmap()
-    plot_radar_charts()
-    plot_regime_hist()
-    plot_transition_matrix()
