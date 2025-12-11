@@ -189,99 +189,247 @@ X_transformed = preprocessor.fit_transform(data)
 X_dense = X_transformed.toarray() if sparse.issparse(X_transformed) else X_transformed
 
 eval_rows = []  # store metrics for all models
+best_model = None
+best_score = -np.inf
+best_df = None
+best_regime_map = None
 
 # ============================================================
-# 4. KMEANS (4 clusters)
+# 4. KMEANS HYPERPARAMETER TUNING (4 clusters)
 # ============================================================
-print("\nRunning KMeans...")
-kmeans = KMeans(n_clusters=4, random_state=42, n_init=20)
-cluster_labels_km = kmeans.fit_predict(X_dense)
+print("\n" + "="*60)
+print("TUNING KMEANS (n_clusters=4)")
+print("="*60)
+
+kmeans_params = {
+    'n_init': [10, 20, 30],
+    'max_iter': [300, 500],
+    'algorithm': ['lloyd', 'elkan']
+}
+
+best_kmeans = None
+best_kmeans_score = -np.inf
+best_kmeans_params = None
+best_kmeans_labels = None
+
+for n_init in kmeans_params['n_init']:
+    for max_iter in kmeans_params['max_iter']:
+        for algorithm in kmeans_params['algorithm']:
+            try:
+                kmeans = KMeans(
+                    n_clusters=4,
+                    random_state=42,
+                    n_init=n_init,
+                    max_iter=max_iter,
+                    algorithm=algorithm
+                )
+                cluster_labels = kmeans.fit_predict(X_dense)
+                
+                # Check cluster balance
+                unique, counts = np.unique(cluster_labels, return_counts=True)
+                min_cluster_size = counts.min()
+                max_cluster_size = counts.max()
+                balance_ratio = min_cluster_size / max_cluster_size if max_cluster_size > 0 else 0
+                
+                sil = silhouette_score(X_dense, cluster_labels)
+                ch = calinski_harabasz_score(X_dense, cluster_labels)
+                db = davies_bouldin_score(X_dense, cluster_labels)
+                inertia = kmeans.inertia_
+                
+                # Combined score: 60% silhouette, 40% CH (normalized), with balance bonus
+                ch_norm = ch / 1000
+                combined_score = 0.6 * sil + 0.4 * ch_norm + 0.1 * balance_ratio
+                
+                params_str = f"n_init={n_init}, max_iter={max_iter}, algorithm={algorithm}"
+                
+                # Always record in evaluation metrics
+                eval_rows.append([
+                    f"KMeans_{n_init}_{max_iter}_{algorithm}",
+                    sil, db, ch, inertia, params_str
+                ])
+                
+                # Check if too imbalanced for best model selection
+                if balance_ratio < 0.05:
+                    print(f"  {params_str}: Sil={sil:.4f}, CH={ch:.2f}, Balance={balance_ratio:.3f} (SKIPPED for best - too imbalanced)")
+                else:
+                    print(f"  {params_str}: Sil={sil:.4f}, CH={ch:.2f}, Balance={balance_ratio:.3f}, Combined={combined_score:.4f}")
+                    
+                    # Only consider balanced clusters for best model
+                    if combined_score > best_kmeans_score:
+                        best_kmeans_score = combined_score
+                        best_kmeans = kmeans
+                        best_kmeans_params = params_str
+                        best_kmeans_labels = cluster_labels
+            except Exception as e:
+                print(f"  Error: {e}")
+                continue
+
+print(f"\n✓ Best KMeans: {best_kmeans_params}")
+print(f"  Score: {best_kmeans_score:.4f}")
 
 df_km = df.copy()
-df_km["cluster_kmeans"] = cluster_labels_km
-
-# Metrics
-sil_km = silhouette_score(X_dense, cluster_labels_km)
-db_km = davies_bouldin_score(X_dense, cluster_labels_km)
-ch_km = calinski_harabasz_score(X_dense, cluster_labels_km)
-inertia_km = kmeans.inertia_
-
-eval_rows.append(["KMeans (4)", sil_km, db_km, ch_km, inertia_km, "Official regimes"])
+df_km["cluster_kmeans"] = best_kmeans_labels
+sil_km = silhouette_score(X_dense, best_kmeans_labels)
+ch_km = calinski_harabasz_score(X_dense, best_kmeans_labels)
+combined_km = 0.6 * sil_km + 0.4 * (ch_km / 1000)
 
 # Interpretable regimes (no noise for KMeans)
 df_km, regime_map_km = assign_regimes(df_km, "cluster_kmeans", allow_noise=False)
-print("\nKMeans regime map:", regime_map_km)
-
-df_km.to_csv("Data/Output/kmeans_regimes.csv")
-print("Saved: Data/Output/kmeans_regimes.csv")
+print("KMeans regime map:", regime_map_km)
 
 # ============================================================
-# 5. AGGLOMERATIVE (4 clusters)
+# 5. AGGLOMERATIVE HYPERPARAMETER TUNING (4 clusters)
 # ============================================================
-print("\nRunning Agglomerative Clustering...")
-agg = AgglomerativeClustering(n_clusters=4, linkage="ward")
-cluster_labels_agg = agg.fit_predict(X_dense)
+print("\n" + "="*60)
+print("TUNING AGGLOMERATIVE CLUSTERING (n_clusters=4)")
+print("="*60)
+
+agg_params = {
+    'linkage': ['ward', 'complete', 'average', 'single']
+}
+
+best_agg = None
+best_agg_score = -np.inf
+best_agg_params = None
+best_agg_labels = None
+
+for linkage in agg_params['linkage']:
+    try:
+        agg = AgglomerativeClustering(n_clusters=4, linkage=linkage)
+        cluster_labels = agg.fit_predict(X_dense)
+        
+        # Check cluster balance
+        unique, counts = np.unique(cluster_labels, return_counts=True)
+        min_cluster_size = counts.min()
+        max_cluster_size = counts.max()
+        balance_ratio = min_cluster_size / max_cluster_size if max_cluster_size > 0 else 0
+        
+        sil = silhouette_score(X_dense, cluster_labels)
+        ch = calinski_harabasz_score(X_dense, cluster_labels)
+        db = davies_bouldin_score(X_dense, cluster_labels)
+        
+        # Combined score with balance bonus
+        ch_norm = ch / 1000
+        combined_score = 0.6 * sil + 0.4 * ch_norm + 0.1 * balance_ratio
+        
+        params_str = f"linkage={linkage}"
+        
+        # Always record in evaluation metrics
+        eval_rows.append([
+            f"Agglomerative_{linkage}",
+            sil, db, ch, np.nan, params_str
+        ])
+        
+        # Check if too imbalanced for best model selection
+        if balance_ratio < 0.05:
+            print(f"  {params_str}: Sil={sil:.4f}, CH={ch:.2f}, Balance={balance_ratio:.3f} (SKIPPED for best - too imbalanced)")
+        else:
+            print(f"  {params_str}: Sil={sil:.4f}, CH={ch:.2f}, Balance={balance_ratio:.3f}, Combined={combined_score:.4f}")
+            
+            # Only consider balanced clusters for best model
+            if combined_score > best_agg_score:
+                best_agg_score = combined_score
+                best_agg = agg
+                best_agg_params = params_str
+                best_agg_labels = cluster_labels
+    except Exception as e:
+        print(f"  Error: {e}")
+        continue
+
+print(f"\n✓ Best Agglomerative: {best_agg_params}")
+print(f"  Score: {best_agg_score:.4f}")
 
 df_agg = df.copy()
-df_agg["cluster_agglomerative"] = cluster_labels_agg
-
-sil_agg = silhouette_score(X_dense, cluster_labels_agg)
-db_agg = davies_bouldin_score(X_dense, cluster_labels_agg)
-ch_agg = calinski_harabasz_score(X_dense, cluster_labels_agg)
-
-eval_rows.append(["Agglomerative (4)", sil_agg, db_agg, ch_agg, np.nan, "Hierarchical"])
+df_agg["cluster_agglomerative"] = best_agg_labels
+sil_agg = silhouette_score(X_dense, best_agg_labels)
+ch_agg = calinski_harabasz_score(X_dense, best_agg_labels)
+combined_agg = 0.6 * sil_agg + 0.4 * (ch_agg / 1000)
 
 # Interpretable regimes (no noise for Agglomerative)
 df_agg, regime_map_agg = assign_regimes(df_agg, "cluster_agglomerative", allow_noise=False)
-print("\nAgglomerative regime map:", regime_map_agg)
-
-df_agg.to_csv("Data/Output/agglomerative_regimes.csv")
-print("Saved: Data/Output/agglomerative_regimes.csv")
+print("Agglomerative regime map:", regime_map_agg)
 
 # ============================================================
-# 6. DBSCAN
+# 6. SELECT BEST MODEL (KMeans vs Agglomerative)
 # ============================================================
-print("\nRunning DBSCAN...")
-dbscan = DBSCAN(eps=1.5, min_samples=10, n_jobs=-1)
-cluster_labels_db = dbscan.fit_predict(X_dense)
+print("\n" + "="*60)
+print("SELECTING BEST MODEL")
+print("="*60)
 
-df_db = df.copy()
-df_db["cluster_dbscan"] = cluster_labels_db
-
-unique_labels = np.unique(cluster_labels_db)
-print("DBSCAN unique labels:", unique_labels)
-
-# Metrics on non-noise points only
-valid_mask = cluster_labels_db != -1
-valid_clusters = np.unique(cluster_labels_db[valid_mask])
-
-if len(valid_clusters) < 2:
-    print("[WARN] Not enough non-noise clusters for DBSCAN metrics.")
-    sil_db = db_db = ch_db = np.nan
+if combined_km > combined_agg:
+    best_model = "KMeans"
+    best_score = combined_km
+    best_params = best_kmeans_params
+    best_df = df_km
+    best_regime_map = regime_map_km
+    best_sil = sil_km
+    best_ch = ch_km
+    print(f"✓ Best: KMeans (Score: {combined_km:.4f}, Sil: {sil_km:.4f}, CH: {ch_km:.2f})")
 else:
-    X_core = X_dense[valid_mask]
-    labels_core = cluster_labels_db[valid_mask]
+    best_model = "Agglomerative"
+    best_score = combined_agg
+    best_params = best_agg_params
+    best_df = df_agg
+    best_regime_map = regime_map_agg
+    best_sil = sil_agg
+    best_ch = ch_agg
+    print(f"✓ Best: Agglomerative (Score: {combined_agg:.4f}, Sil: {sil_agg:.4f}, CH: {ch_agg:.2f})")
 
-    sil_db = silhouette_score(X_core, labels_core)
-    db_db = davies_bouldin_score(X_core, labels_core)
-    ch_db = calinski_harabasz_score(X_core, labels_core)
+# Check cluster distribution for best model
+best_cluster_col = "cluster_kmeans" if best_model == "KMeans" else "cluster_agglomerative"
+unique_clusters, counts = np.unique(best_df[best_cluster_col], return_counts=True)
+print(f"\nCluster distribution:")
+for cluster, count in zip(unique_clusters, counts):
+    pct = (count / len(best_df)) * 100
+    print(f"  Cluster {cluster}: {count} points ({pct:.1f}%)")
 
-eval_rows.append(["DBSCAN", sil_db, db_db, ch_db, np.nan, "Density-based; noise=-1"])
+# Warn if clusters are too imbalanced
+min_count = counts.min()
+max_count = counts.max()
+balance_ratio = min_count / max_count if max_count > 0 else 0
+if balance_ratio < 0.1:
+    print(f"\n⚠ WARNING: Clusters are very imbalanced (balance ratio: {balance_ratio:.3f})")
+    print("   Consider using different features or dimensionality reduction (PCA)")
 
-# Interpretable regimes (noise -> "noise")
-df_db, regime_map_db = assign_regimes(df_db, "cluster_dbscan", allow_noise=True)
-print("\nDBSCAN regime map:", regime_map_db)
-
-df_db.to_csv("Data/Output/dbscan_regimes.csv")
-print("Saved: Data/Output/dbscan_regimes.csv")
+# Save only the best model
+output_path = "Data/Output/best_clustering_regimes.csv"
+best_df.to_csv(output_path)
+print(f"\n✓ Saved best model to: {output_path}")
 
 # ============================================================
 # 7. METRIC COMPARISON TABLE
 # ============================================================
 comparison_df = pd.DataFrame(
     eval_rows,
-    columns=["Model", "Silhouette", "DB Index", "CH Index", "Inertia", "Notes"],
+    columns=["Model", "Silhouette", "DB Index", "CH Index", "Inertia", "Parameters"],
 )
 
-print("\n=== Cluster Evaluation Summary ===")
-print(comparison_df)
+# Add combined score
+comparison_df["Combined_Score"] = (
+    0.6 * comparison_df["Silhouette"] + 
+    0.4 * (comparison_df["CH Index"] / 1000)
+)
+
+# Sort by combined score
+comparison_df = comparison_df.sort_values("Combined_Score", ascending=False)
+
+print("\n" + "="*80)
+print("CLUSTER EVALUATION SUMMARY (All Models)")
+print("="*80)
+print(comparison_df.to_string(index=False))
+
+# Save evaluation metrics
+metrics_path = "Data/Output/clustering_evaluation_metrics.csv"
+comparison_df.to_csv(metrics_path, index=False)
+print(f"\n✓ Saved evaluation metrics to: {metrics_path}")
+
+print("\n" + "="*80)
+print("BEST MODEL SUMMARY")
+print("="*80)
+print(f"Model: {best_model}")
+print(f"Parameters: {best_params}")
+print(f"Silhouette Score: {best_sil:.4f}")
+print(f"Calinski-Harabasz Index: {best_ch:.2f}")
+print(f"Combined Score: {best_score:.4f}")
+print(f"Regime Map: {best_regime_map}")
+print("="*80)
