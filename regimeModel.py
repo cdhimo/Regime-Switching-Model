@@ -12,16 +12,13 @@ import matplotlib.pyplot as plt
 # Load data
 # ============================================================
 df = pd.read_csv(
-    "Data/Output/agglomerative_regimes.csv"
+    "Data/Output/kmeans_regimes.csv"
 )
 
 # ============================================================
-# Define horizon and create lags
-# (HORIZON not used directly in this script, but kept for clarity)
-# 7 days = 7 * 24 hours
+# create lags
 # ============================================================
-HORIZON = 24 * 7   # 168 hours
-LAGS = 24          # 24 hours of lagged 1h returns
+LAGS = 24 * 3         # 72 hours of lagged 1h returns
 
 # Lagged BTC returns
 for i in range(1, LAGS + 1):
@@ -53,7 +50,7 @@ lag_features = [f'BTC_ret_1h_lag_{i}' for i in range(1, LAGS + 1)]
 time_features = ["day_of_week_cat", "weekend_cat"]
 
 # Optional regimes (keep only vol regime)
-regime_features = ["BTC_vol_regime_7d"]
+regime_features = ["BTC_vol_regime_7d", "regime"]
 
 # Combine
 feature_cols = numeric_base_features + lag_features + time_features + regime_features
@@ -96,11 +93,12 @@ model_pipeline = Pipeline(
         (
             "regressor",
             RandomForestRegressor(
-                n_estimators=500,
-                max_depth=12,          # can tune
+                n_estimators=400,
+                max_depth=8,          # can tune
                 random_state=42,
                 n_jobs=-1,
-                min_samples_leaf=10,
+                min_samples_leaf=25,
+                min_samples_split=50
             ),
         ),
     ]
@@ -167,20 +165,28 @@ if (n - p - 1) > 0:
     r2_adj = 1 - (1 - r2) * (n - 1) / (n - p - 1)
 else:
     r2_adj = np.nan  # Cannot calculate Adjusted R-squared
+def horizon_sharpe(pred_returns):
+    pred_returns = np.array(pred_returns)
+    if pred_returns.std() > 0:
+        return pred_returns.mean() / pred_returns.std()
+    else:
+        return np.nan
 
-print("=== Random Forest KMeans-Fold Evaluation (7d ahead) ===")
+
+print("=== Random Forest KMeans-Fold Evaluation (1h ahead) ===")
 print(f"MAE   : {mae:.6f}")
 print(f"MSE   : {mse:.6f}")
 print(f"RMSE  : {rmse:.6f}")
 print(f"R^2   : {r2:.4f}")
 print(f"Adj R^2: {r2_adj:.4f}")
+print(f"Crypto 7-Day Sharpe: {horizon_sharpe(y_pred_final):.4f}")
 
 # ============================================================
 # Plot predictions
 # ============================================================
 plt.figure(figsize=(14, 6))
-plt.plot(np.where(y_mask, y, np.nan), label="Actual 7-day Log Return", zorder=1)
-plt.plot(np.where(y_mask, y_pred_all, np.nan), label="Predicted 7-day Log Return", zorder=2)
+plt.plot(np.where(y_mask, y, np.nan), label="Actual 7-Day Log Return", zorder=1)
+plt.plot(np.where(y_mask, y_pred_all, np.nan), label="Predicted 7-Day Log Return", zorder=2)
 plt.title("KMeans-Fold CV: 7-Day Ahead BTC Log Return Forecast (Full Dataset)")
 plt.xlabel("Time Index")
 plt.ylabel("7-Day Log Return")
